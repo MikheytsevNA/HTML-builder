@@ -14,7 +14,7 @@ fs.promises.readdir(pathToDir, {withFileTypes: true})
         name = (path.parse(file.name).name + ' - ');
         ext = (path.extname(file.name).slice(1) + ' - ');
         fs.stat(path.join(pathToDir, file.name), (err, stats) => {
-          console.log(name + ext + stats.size);
+          console.log(name + ext + stats.size + "B");
         });
       }
     }
