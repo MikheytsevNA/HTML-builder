@@ -1,36 +1,38 @@
 const fs = require('fs');
+const fsP = require('fs/promises');
 const path = require('path');
-const rl = require('readline');
-const pathToTemplate = path.join(__dirname, 'template.html');
-const pathToComponents = path.join(__dirname, 'components');
-const keywords = ['{{articles}}', '{{footer}}', '{{header}}'].sort();
-const pathToBuild = path.join(__dirname, 'project-dist');
 
-fs.promises.mkdir(pathToBuild, {recursive: true}).then();
-
-let readStream = fs.createReadStream(pathToTemplate, 'utf-8');
-let writeStream = fs.createWriteStream(path.join(pathToBuild, 'index.html'), 'utf-8');
-let templateCopy = '';
-let allTags = [];
-
-fs.promises.readFile(pathToTemplate, 'utf-8')
-.then( (data) => {
-  templateCopy += data;
-})
-.then(() => {
-  templateCopy = templateCopy.split('\n');
-  console.log(findTag(templateCopy, keywords, allTags, 0));
-})
-
-function findTagInLine(tags, line) {
-  let count = 0;
-  for (let tag of tags) {
-    if (line.includes(tag)) {
-      return count;
-    }
-    count += 1;
+async function deleteIfExists(pathToBuild) {
+  try {
+    await fsP.access(pathToBuild);
+    await fsP.rm(pathToBuild, { recursive: true, force: true });
+  } catch {
+    console.log('folder was not there');
   }
-  return -1;
+}
+
+
+async function createBuild(pathToBuild) {
+  await deleteIfExists(pathToBuild);
+  await fsP.mkdir(pathToBuild);
+}
+
+async function buildHTML(pathToBuild, pathToTemplate, pathToComponents) {
+  let [templateCopy, foundTags] = await makeTemplateCopyAndTags(pathToTemplate);
+  templateCopy = await pasteInsteadOfTags(templateCopy, foundTags, pathToComponents)
+  writeStream = fs.createWriteStream(path.join(pathToBuild, 'index.html'), 'utf-8');
+  writeStream.write(templateCopy.join('\n'));
+}
+
+async function makeTemplateCopyAndTags(pathToTemplate) {
+  const copy = await fsP.readFile(pathToTemplate, 'utf-8')
+  const tags = await findTag(copy.split('\n'), discoverTag(copy), [], 0);
+  return [copy.split('\n'), tags];
+}
+
+function discoverTag(text) {
+  const regex = /{{([a-z]+)}}/gm;
+  return text.match(regex)
 }
 
 function findTag(text, tags, allTags, lineIndex) {
@@ -61,11 +63,30 @@ function findTag(text, tags, allTags, lineIndex) {
   return findTag(newText, tags, allTags, count)
 }
 
+function findTagInLine(tags, line) {
+  let count = 0;
+  for (let tag of tags) {
+    if (line.includes(tag)) {
+      return count;
+    }
+    count += 1;
+  }
+  return -1;
+}
+
+async function pasteInsteadOfTags(text, tags, components) {
+  for (let tag of tags.reverse()) {
+    const componentContent = await fsP.readFile(path.join(components, tag[2].slice(2, tag[2].length - 2)) + '.html', 'utf-8');
+    text.splice(tag[0],1, ...componentContent.split('\n').map((line) => ' '.repeat(tag[1]) + line));
+  }
+  return text;
+}
+
+
 // merging .css
 function mergeCss(pathToFolder) {
   let writeStream = fs.createWriteStream(path.join(__dirname, 'project-dist', 'style.css'))
-
-  fs.promises.readdir(
+  fsP.readdir(
     pathToFolder,
     {withFileTypes: true},
   )
@@ -88,33 +109,37 @@ function mergeCss(pathToFolder) {
   )
 }
 
-mergeCss(path.join(__dirname, "styles"));
-
 // copy assets
-const pathSource = path.join(__dirname, 'assets'); //from this folder
-const pathTarget = path.join(__dirname, 'project-dist', 'assets'); //to this folder
-fs.promises.mkdir(pathTarget, {recursive: true}).then();
 
-function copyDir(pathSource, pathTarget) { // recursive copy dir
-  // empty folder
-  fs.promises.readdir(pathTarget)
-    .then((files) => {
-      for (let file of files) {
-        fs.promises.unlink(path.join(pathTarget, file)).then();
-      }
-    })
-  // copy from source to target
-  fs.promises.readdir(pathSource)
-    .then((files) => {
-      for (let file of files) {
-        if (path.extname(file).length === 0) {
-          fs.promises.mkdir(path.join(pathTarget, file), {recursive: true}).then();
-          copyDir(path.join(pathSource, file), path.join(pathTarget, file))
-        } else {
-          fs.promises.copyFile(path.join(pathSource, file), path.join(pathTarget, file)).then();
-        }
-      }
-    })
+async function copyAssets(pathSource, pathTarget) { // recursive copy dir
+  await fsP.mkdir(pathTarget);
+  const files = await fsP.readdir(pathSource);
+  for (let file of files) {
+    if (path.extname(file).length === 0) {
+      copyAssets(path.join(pathSource, file), path.join(pathTarget, file))
+    } else {
+      fsP.copyFile(path.join(pathSource, file), path.join(pathTarget, file));
+    }
+  }
 }
 
-copyDir(pathSource, pathTarget);
+async function main() {
+  const pathToTemplate = path.join(__dirname, 'template.html');
+  const pathToComponents = path.join(__dirname, 'components');
+  const pathToStyles = path.join(__dirname, 'styles');
+  const pathToBuild = path.join(__dirname, 'project-dist');
+  const pathSourceAssets = path.join(__dirname, 'assets');
+  const pathTargetAssets = path.join(__dirname, 'project-dist', 'assets');
+  try {
+    await createBuild(pathToBuild, pathTargetAssets);
+    await buildHTML(pathToBuild, pathToTemplate, pathToComponents);
+    await mergeCss(pathToStyles);
+    await copyAssets(pathSourceAssets, pathTargetAssets);
+  } catch (err) {
+    await deleteIfExists(pathToBuild);
+    throw err;
+  }
+}
+
+
+main();
