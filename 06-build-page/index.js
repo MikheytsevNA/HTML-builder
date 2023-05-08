@@ -6,9 +6,7 @@ async function deleteIfExists(pathToBuild) {
   try {
     await fsP.access(pathToBuild);
     await fsP.rm(pathToBuild, { recursive: true, force: true });
-  } catch {
-    console.log('folder was not there');
-  }
+  } catch {}
 }
 
 
@@ -26,64 +24,43 @@ async function buildHTML(pathToBuild, pathToTemplate, pathToComponents) {
 
 async function makeTemplateCopyAndTags(pathToTemplate) {
   const copy = await fsP.readFile(pathToTemplate, 'utf-8')
-  const tags = await findTag(copy.split('\n'), discoverTag(copy), [], 0);
+  const tags = await discoverTag(copy);
   return [copy.split('\n'), tags];
 }
 
 function discoverTag(text) {
   const regex = /{{([a-z]+)}}/gm;
-  return text.match(regex)
-}
-
-function findTag(text, tags, allTags, lineIndex) {
-  let count = lineIndex;
-  let newText = [];
-  let isFound = false;
-  for (let line of text) {
-    let foundTag = findTagInLine(tags, line);
-    if (isFound) {
-      newText.push(line)
-    } else if (foundTag != -1) {
-      let index = line.indexOf(tags[foundTag]);
-      if (allTags.length != 0) {
-        if (count == allTags.at(-1)[0]) {
-          index += allTags.at(-1)[1] + allTags.at(-1)[2].length;
-        }
-      }
-      newText.push(line.slice(index + tags[foundTag].length));
-      allTags.push([count, index, tags[foundTag]]);
-      isFound = true;
-    } else {
-      count += 1;
-    }
-  }
-  if (!isFound) {
-    return allTags;
-  }
-  return findTag(newText, tags, allTags, count)
-}
-
-function findTagInLine(tags, line) {
+  let allTags = [];
   let count = 0;
-  for (let tag of tags) {
-    if (line.includes(tag)) {
-      return count;
-    }
-    count += 1;
+  for (let line of text.split('\n')) {
+    for (let match of line.matchAll(regex)) {
+      allTags.push([count, match.index, match[0]])
+    };
+    count+=1;
   }
-  return -1;
+  return allTags;
 }
 
 async function pasteInsteadOfTags(text, tags, components) {
+  let count = 1;
   for (let tag of tags.reverse()) {
     const componentContent = await fsP.readFile(path.join(components, tag[2].slice(2, tag[2].length - 2)) + '.html', 'utf-8');
-    text.splice(tag[0],1, ...componentContent.split('\n').map((line) => ' '.repeat(tag[1]) + line));
+    if (count <= tags.length - 1) {
+      if (tag[0] === tags[count][0]){// in repeating tag
+        text[tag[0]] = text[tag[0]].slice(0, tag[0]+2);
+        text.splice(tag[0]+1,0, ...componentContent.split('\n').map((line) => ' '.repeat(tags[count][1]) + line));
+      } else { // in NOT repeating tag
+        text.splice(tag[0],1, ...componentContent.split('\n').map((line) => ' '.repeat(tag[1]) + line));
+      }   
+    } else { //for first tag
+      text.splice(tag[0],1, ...componentContent.split('\n').map((line) => ' '.repeat(tag[1]) + line));
+    }
+    count += 1;
   }
   return text;
 }
 
 
-// merging .css
 function mergeCss(pathToFolder) {
   let writeStream = fs.createWriteStream(path.join(__dirname, 'project-dist', 'style.css'))
   fsP.readdir(
@@ -108,8 +85,6 @@ function mergeCss(pathToFolder) {
     }
   )
 }
-
-// copy assets
 
 async function copyAssets(pathSource, pathTarget) { // recursive copy dir
   await fsP.mkdir(pathTarget);
