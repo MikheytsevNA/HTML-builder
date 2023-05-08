@@ -4,21 +4,18 @@ const { stdout } = process;
 
 const pathToDir = path.join(__dirname, 'secret-folder');
 
-fs.promises.readdir(pathToDir, {withFileTypes: true})
-  .then((files) => {
+(async () => {
+  try {
+    let files = await fs.promises.readdir(pathToDir, {withFileTypes: true});
     for (let file of files) {
-      let sizeBytes = 0;
       let name = '';
       let ext = '';
       if (file.isFile()) {
         name = (path.parse(file.name).name + ' - ');
         ext = (path.extname(file.name).slice(1) + ' - ');
-        fs.stat(path.join(pathToDir, file.name), (err, stats) => {
-          console.log(name + ext + stats.size + "B");
-        });
+        const stats = await fs.promises.stat(path.join(pathToDir, file.name))
+        console.log(name + ext + stats.size + " B");
       }
     }
-  })
-  .catch(err => {
-    console.log(err)
-  })
+  } catch {}
+})();
